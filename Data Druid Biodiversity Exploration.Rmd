@@ -1,0 +1,394 @@
+---
+title: "The Data Druid's Garden"
+subtitle: "On Biodiversity, Life, and Growth"
+author: "Jake Weber"
+date: "January 24, 2022"
+output: 
+  html_document:
+    theme: yeti
+    highlight: kate
+    code_folding: show
+    toc: TRUE
+    toc_depth: 2
+    number_sections: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+editor_options: 
+  chunk_output_type: inline
+  markdown: 
+    wrap: 72
+---
+
+```{r INITIATING, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Hello to all who may stumble upon this. Here is my exploration into a
+plant inventory analysis. The data embodies my personal plant collection
+so it was especially fun for me to actually quantify and analyze them.
+Lastly, you'll find a visualization at the end of this called **Life in
+a Lock** which is my attempt to blend a data-driven analysis with some
+creative manipulation that I call art. Hope you enjoy!
+
+For those interested, please feel free to get in contact via:
+
+-   LinkedIn: [Jake Weber](https://www.linkedin.com/in/mrjakeweber/)
+
+-   Github: [Jake Weber](https://github.com/witnwhimsy)
+
+-   Email: Mr.Jake.Weber\@gmail.com
+
+# Preparation
+
+## Packages
+
+The **tidyverse** is the main workhorse of my R packages. Almost
+everything vital stems from it's ecosystem and supplements the suite.
+
+```{r message=FALSE, warning=FALSE}
+#options(ggplot2.continuous.color = "viridis")
+#options(ggplot2.continuous.fill = "viridis")
+#options(ggplot2.discrete.fill = "viridis")
+
+options(scipen = 999)
+setwd("C:/Users/mrjak/Desktop/Data Vizardry/Data Druid")
+
+#packages ----
+
+#Workhorse
+library(tidyverse)
+
+#Import & Export
+library(readxl)
+library(writexl)
+library(readr)
+
+#Formatting & Visualization
+library(tidyquant)
+library(hrbrthemes)
+library(kableExtra)
+library(viridisLite)
+library(scales)
+library(DT)
+library(ggrepel)
+```
+
+## Reading the Data
+
+Ingesting the data from a .csv that I originally built in Google Drive
+which could lend it's self to automated, on-going reporting.
+
+```{r warning=FALSE}
+import_dat <- readr::read_csv("Arcadian Gardens Inventory Analysis.csv")
+```
+
+## Glimpse of the Data
+
+Using **glimpse()** to take a peak at the data with an easy-to-read
+summary.
+
+```{r}
+import_dat %>% glimpse()
+```
+
+# Data Manipulation
+
+## Renaming the Columns
+
+Altering the names of the columns to make them more manageable in R. We
+can always create prettier labels later on.
+
+```{r}
+dat <- import_dat %>%
+    rename( #renaming the columns
+        id = id,
+        name_scientific = `Scientific Name`,
+        name_common = `Common Name`,
+        maturity = Maturity,
+        water = `Watering Preference`)
+```
+
+## Fixing a Typo
+
+Using a quick summary, we can see that one of the "adults" is missing a
+letter. Then, we account for this via **case_when()** to patch the data.
+This fixes it for any downstream inquiries into Maturity.
+
+### Spotting the Typo
+
+```{r}
+dat %>% group_by(maturity) %>% summarise(n = n()) %>% 
+    kbl(align = "l", format.args = list(big.mark = ",")) %>% 
+    kable_styling(
+        full_width = F,
+        bootstrap_options = c("hover", "responsive", "striped"))
+```
+
+### Fix with Case When
+
+```{r}
+dat <- dat %>% 
+    mutate( #tidying text and a typo in the data
+        name_scientific = name_scientific %>% str_to_title(),
+        maturity = case_when(maturity == "Adut" ~ "Adult",
+                             T ~ maturity),
+        name_scientific = case_when(name_scientific == "Saintpaulia" ~ "Saintpaulia Incognita",
+                                    T ~ name_scientific))
+```
+
+## Deriving Genus x Species
+
+We are given the Genus and Species via the Scientific Name, the trick is
+extracting them. First, I use **separate()** to break out the *genus*
+since they are consistently one word in my collectiona and followed by a
+space. <br> <br> The species were a little trickier due to having a
+variety of patterns that broke separate(), such as 2+ word species,
+apostrophization, hybrids & cultivars. So for the second part, I simply
+subtracted the new *genus* from the existing Scientific name via
+**str_remove()** to derive the *species*.
+
+### Engineering Genus
+
+```{r}
+dat <- dat %>% 
+    separate(col = name_scientific, 
+             into = c("genus"), 
+             sep = " ", 
+             remove = FALSE) %>% #pulling the genus out of the scientific genus species
+    select(genus, contains("name"), water, maturity, id) %>% 
+    mutate(genus = genus %>% as_factor(),
+           name_common = name_common %>% str_to_title()) 
+
+dat %>% distinct(genus) %>% pull()
+```
+
+### Engineering Species
+
+```{r}
+dat <- dat %>% 
+    mutate(species = str_remove(as.character(name_scientific), 
+                                as.character(genus)) %>% 
+               trimws("both")) %>% #using genus to derive species from scientific name
+    select(genus, species, contains("name"), maturity, water, id)
+
+dat %>% distinct(species) %>% pull()
+```
+
+## Tidy'd Data
+
+```{r}
+
+dat %>% datatable(filter = "bottom")
+
+```
+
+## Stat'd Data
+
+```{r}
+
+dat2 <- dat %>%  # adding some stats
+    group_by(genus) %>% mutate(n_genus = n()) %>% ungroup() %>% 
+    group_by(name_scientific) %>% mutate(n_species = n()) %>% ungroup()  %>% 
+    arrange(desc(n_genus), desc(n_species)) %>% 
+    mutate(genus = as_factor(genus),
+           species = as_factor(species),
+           # genus_scaled = n_genus / max(n_genus) * 100,
+           # species_scaled = n_species / max(n_species) * 100,
+           perc_genus = n_genus / sum(n_genus) * 100,
+           perc_species = n_species / sum(n_species) * 100,
+           percent_genus = scales::percent(n_genus / sum(n_genus)),
+           percent_species = scales::percent(n_species / sum(n_species))) %>% 
+    select(name_scientific, genus, species, contains("n_"), contains("perc"), everything())
+
+dat3 <- dat2 %>%  # creating a summary of species collected
+    group_by(genus) %>% 
+    mutate(test = paste0(species)) %>% 
+    summarise(genera_collected = toString(unique(species))) %>% 
+    ungroup() 
+
+plant_dat <- left_join(x = dat2, y = dat3, by = c("genus")) %>% select(1,2,3,genera_collected,everything())
+
+plant_dat %>% 
+    select(genus, name_scientific, name_common, genera_collected, 
+           contains("n_"), contains("percent_")) %>% 
+    datatable(filter="bottom" )
+
+```
+
+# Exploration
+
+## Basic Overview
+
+We see here that I have 73 plants in my collection which represents 22
+unique genera and 49 unique species.
+
+```{r}
+
+plant_dat %>% 
+    summarise(
+        n = n(),
+        n_distinct_genus = n_distinct(genus),
+        n_distinct_species = n_distinct(name_scientific)
+    ) %>% 
+    kbl(align = "l", format.args = list(big.mark = ",")) %>% 
+    kable_styling(
+        full_width = F,
+        bootstrap_options = c("hover", "responsive", "striped"))
+
+```
+
+## Genera
+
+### Summary
+
+```{r}
+viz_dat_genus <- 
+    plant_dat %>% 
+    group_by(genus, genera_collected) %>% summarise(n = n()) %>% ungroup() %>% 
+    mutate(percent_total = scales::percent(n/sum(n)))
+
+viz_dat_genus %>% kbl(align = "l", format.args = list(big.mark = ",")) %>% 
+    kable_styling(
+        full_width = F,
+        bootstrap_options = c("hover", "responsive", "striped"))
+```
+
+### Viz
+
+```{r fig.height=6, fig.width=9}
+
+viz_genus <- 
+    viz_dat_genus %>% 
+    ggplot(aes(text = str_glue(
+    "Genera: {genus},
+     Count: {n},
+     Percent of Collection: {percent_total}
+     Species Collected: {genera_collected}"))) +
+    geom_col(aes(x = genus %>% fct_reorder(n), fill = n,y = n)) +
+    scale_y_continuous(breaks = seq(0, 12.5, by = 3)) +
+    coord_flip() +
+    scale_fill_viridis_c(option = "viridis", direction = 1) +
+    theme_minimal() +
+    labs(
+        title = "Favorite Genera",
+        subtitle = "Can you tell I like Anthuriums?",
+        caption = "Out of the 22 Genera represented, my top 5 represent 47.5% of my collection",
+        x = "Genera",
+        y = "Count",
+        fill = "Count")
+
+viz_genus
+```
+
+### Interactive Viz
+
+```{r fig.height=6, fig.width=9}
+viz_genus %>% plotly::ggplotly(tooltip = "text")
+```
+
+## Genus Species
+
+Next, I'm going to visualize the species found with the various genera.
+
+### Top 5 Genera
+
+To start, I'm honing in on the top 5 genera within my collection. The
+generan selected are: Anthurium, Ficus, Monstera, Begonia, &
+Philodendron. <br> <br> I call this visualization **Life in a Lock** as
+a saw a parallel between the visualization and that of a keyhole. "Life"
+stemming from how the visualization depicts biodiversity within my
+collection.
+
+```{r fig.height=9, fig.width=9}
+# library
+library(tidyverse)
+ 
+# Create dataset
+data <- plant_dat %>% filter(n_genus >= 5) %>% 
+    group_by(genus, name_scientific, species) %>% 
+    summarise(n = n()) %>% ungroup()
+
+  data$genus <- factor(data$genus, 
+         levels = c("Anthurium", 
+                    "Ficus",
+                    "Monstera",
+                    "Begonia",
+                    "Philodendron")) 
+  
+   data$species <- factor(data$species,
+                levels = c("Clarinervium","Crystallinum",
+                           "Magnificum","Regale",
+                           "Dorayaki","Regale+Magnificum", 
+                           "Lyrata","Elastica 'Ruby'" ,
+                           "Benghalensis","Elastica 'Tineke'",
+                           "Elastica 'Burgundy'",
+                           "Deliciosa 'Albo Variegata'",
+                           "Deliciosa",
+                           "Adansonii","Maculata", 
+                           "'Lois Burke'","Fibrous 'My Special Angel'",
+                           "Fibrous 'Whimsy'","Verrucosum 'Mini'",
+                           "'El Choco'","Erubescens",
+                           "Micans","Verrucosum X Melanochrysum",
+                           "Verrucosum"))
+      
+data <- data %>% 
+      mutate(group = genus,
+             individual = species,
+             value = n) %>% 
+      select(group, individual, value)
+
+
+
+# Set a number of 'empty bar' to add at the end of each group
+empty_bar <- 4
+to_add <- data.frame( matrix(NA, empty_bar*nlevels(data$group), ncol(data)) )
+colnames(to_add) <- colnames(data)
+to_add$group <- rep(levels(data$group), each=empty_bar)
+data <- rbind(data, to_add)
+data <- data %>% arrange(group)
+data$id <- seq(1, nrow(data))
+# 
+# label_data <- data
+# number_of_bar <- nrow(label_data)
+# label_data$angle <- 360 * (label_data$id-0.5)/number_of_bar     # I substract 0.5 because the letter must have the angle of the center of the bars. Not extreme right(1) or extreme left (0)
+# # label_data$hjust <- ifelse(angle < -90, 1, 0)
+# # label_data$angle <- ifelse(angle < -90, angle+180, angle)
+ 
+# Make the plot
+p <- ggplot(data, aes(x=individual, y=value, fill = group)) +  
+  geom_bar(stat="identity") +
+  ylim(-1,5) +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  theme_minimal() +
+    labs(
+        title = "Life in a Lock",
+        subtitle = "Biodiversity amongst my top Genera",
+        caption = "Out of the 22 Genera represented, my top 5 represent 47.5% of my collection",
+        x = "",
+        y = "Count",
+        fill = "Genera") +
+    theme(
+      legend.position = "bottom",
+#     axis.text = element_blank(),
+#     axis.text.x = element_text(angle = 90),
+#     axis.title = element_blank(),
+#      panel.grid = element_blank(),
+     plot.margin = margin(.5, .5, .5, .5, "cm")
+)  +
+  coord_polar(start = 3.05, clip = "off")
+    
+
+ 
+p
+
+```
+
+```{r}
+
+ggsave(plot = p, filename = "Life in a Lock_minimal.pdf", width = 9, height = 9, units = "in")
+
+
+```
